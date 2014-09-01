@@ -60,7 +60,7 @@
 (def specials
   "Set of the special forms for clojure in the JVM"
   (into ana/specials
-        '#{var monitor-enter monitor-exit clojure.core/import* reify* deftype* case*}))
+        '#{clojure.core/var clojure.core/monitor-enter clojure.core/monitor-exit clojure.core/import* clojure.core/reify* clojure.core/deftype* clojure.core/case*}))
 
 (defmulti parse
   "Extension to tools.analyzer/-parse for JVM special forms"
@@ -96,7 +96,7 @@
    (symbol? form)
    (let [target (maybe-class (namespace form))]
      (if (and target (not (resolve-ns (symbol (namespace form)) env)))       ;; Class/field
-       (with-meta (list '. target (symbol (str "-" (symbol (name form))))) ;; transform to (. Class -field)
+       (with-meta (list 'clojure.core/. target (symbol (str "-" (symbol (name form))))) ;; transform to (. Class -field)
          (meta form))
        form))
 
@@ -115,7 +115,7 @@
                            {:tag 'java.lang.Class})
                          target)
                 args (list* (symbol (subs opname 1)) args)]
-            (with-meta (list '. target (if (= 1 (count args)) ;; we don't know if (.foo bar) is
+            (with-meta (list 'clojure.core/. target (if (= 1 (count args)) ;; we don't know if (.foo bar) is
                                          (first args) args))  ;; a method call or a field access
               (meta form)))
 
@@ -123,19 +123,31 @@
                (not (resolve-ns (symbol opns) env))) ; (class/field ..)
           (let [target (maybe-class opns)
                 op (symbol opname)]
-            (with-meta (list '. target (if (zero? (count expr))
+            (with-meta (list 'clojure.core/. target (if (zero? (count expr))
                                          op
                                          (list* op expr)))
               (meta form)))
 
           (.endsWith opname ".") ;; (class. ..)
-          (with-meta (list* 'new (symbol (subs opname 0 (dec (count opname)))) expr)
+          (with-meta (list* 'clojure.core/new (symbol (subs opname 0 (dec (count opname)))) expr)
             (meta form))
 
           :else form))
        form))
 
    :else form))
+
+(defn resolve-special*
+  [op env]
+  (when-let [v (resolve-var op env)]
+    (let [s (symbol (name (.getName (.-ns ^clojure.lang.Var v)))
+                    (name (.-sym ^clojure.lang.Var v)))]
+      (specials s))))
+
+(defn resolve-special
+  [[op & args] env]
+  (when-let [sop (resolve-special* op env)]
+    (cons sop args)))
 
 (defn macroexpand-1
   "If form represents a macro form or an inlineable function,
@@ -145,8 +157,8 @@
      (env/ensure (global-env)
        (if (seq? form)
          (let [[op & args] form]
-           (if (specials op)
-             form
+           (if-let [sform (resolve-special form env)]
+             sform
              (let [v (resolve-var op env)
                    m (meta v)
                    local? (-> env :locals (get op))
@@ -211,7 +223,7 @@
                                      (when inline-arities
                                        {:inline-arities (eval inline-arities)})))))))
 
-(defmethod parse 'var
+(defmethod parse 'clojure.core/var
   [[_ var :as form] env]
   (when-not (= 2 (count form))
     (throw (ex-info (str "Wrong number of args to var, had: " (dec (count form)))
@@ -224,7 +236,7 @@
      :var  var}
     (throw (ex-info (str "var not found: " var) {:var var}))))
 
-(defmethod parse 'monitor-enter
+(defmethod parse 'clojure.core/monitor-enter
   [[_ target :as form] env]
   (when-not (= 2 (count form))
     (throw (ex-info (str "Wrong number of args to monitor-enter, had: " (dec (count form)))
@@ -236,7 +248,7 @@
    :target   (-analyze target (ctx env :ctx/expr))
    :children [:target]})
 
-(defmethod parse 'monitor-exit
+(defmethod parse 'clojure.core/monitor-exit
   [[_ target :as form] env]
   (when-not (= 2 (count form))
     (throw (ex-info (str "Wrong number of args to monitor-exit, had: " (dec (count form)))
@@ -299,11 +311,11 @@
     (memo-clear! f [arg]))
 
   (let [interfaces (mapv #(symbol (.getName ^Class %)) interfaces)]
-    (eval (list 'let []
-                (list 'deftype* name class-name args :implements interfaces)
-                (list 'import class-name)))))
+    (eval (list 'clojure.core/let []
+                (list 'clojure.core/deftype* name class-name args :implements interfaces)
+                (list 'clojure.core/import class-name)))))
 
-(defmethod parse 'reify*
+(defmethod parse 'clojure.core/reify*
   [[_ interfaces & methods :as form] env]
   (let [interfaces (conj (disj (set (mapv maybe-class interfaces)) Object)
                          IObj)
@@ -324,7 +336,7 @@
       :interfaces interfaces
       :children   [:methods]})))
 
-(defmethod parse 'deftype*
+(defmethod parse 'clojure.core/deftype*
   [[_ name class-name fields _ interfaces & methods :as form] env]
   (let [interfaces (disj (set (mapv maybe-class interfaces)) Object)
         fields-expr (mapv (fn [name]
@@ -358,7 +370,7 @@
      :interfaces interfaces
      :children   [:fields :methods]}))
 
-(defmethod parse 'case*
+(defmethod parse 'clojure.core/case*
   [[_ expr shift mask default case-map switch-type test-type & [skip-check?] :as form] env]
   (let [[low high] ((juxt first last) (keys case-map)) ;;case-map is a sorted-map
         e (ctx env :ctx/expr)
@@ -398,6 +410,11 @@
 
 
 (defmethod parse 'catch
+  [[_ etype ename & body :as form] env]
+  (let [etype (if (= etype :default) Throwable etype)] ;; catch-all
+    (ana/-parse `(catch ~etype ~ename ~@body) env)))
+
+(defmethod parse 'clojure.core/catch
   [[_ etype ename & body :as form] env]
   (let [etype (if (= etype :default) Throwable etype)] ;; catch-all
     (ana/-parse `(catch ~etype ~ename ~@body) env)))
@@ -531,7 +548,7 @@
                                      (if (= mform form)
                                        [mform (seq raw-forms)]
                                        (recur mform (conj raw-forms form))))))]
-         (if (and (seq? mform) (= 'do (first mform)) (next mform))
+         (if (and (seq? mform) (= 'clojure.core/do (first mform)) (next mform))
            ;; handle the Gilardi scenario
            (let [[statements ret] (butlast+last (rest mform))
                  statements-expr (mapv (fn [s] (analyze+eval s (-> env

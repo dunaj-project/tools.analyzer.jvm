@@ -33,7 +33,7 @@
 (defmethod -infer-tag :var
   [{:keys [var form] :as ast}]
   (let [{:keys [tag arglists]} (meta var)
-        arglists (if (= 'quote (first arglists))
+        arglists (if (= 'clojure.core/quote (first arglists))
                    (second arglists)
                    arglists)
         form-tag (:tag (meta form))]

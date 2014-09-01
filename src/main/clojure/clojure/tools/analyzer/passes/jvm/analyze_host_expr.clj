@@ -69,7 +69,7 @@
   [target-type field target-expr class env]
   (if class
     (case target-type
-      :static (or (maybe-static-field (list '. class field))
+      :static (or (maybe-static-field (list 'clojure.core/. class field))
                   (throw (ex-info (str "Cannot find field "
                                        field " for class " class)
                                   (merge {:class class
@@ -97,8 +97,8 @@
   [target-type m-or-f target-expr class env]
   (let [target-class (-> target-expr :tag)
         [field method] (if class
-                         [(maybe-static-field (list '. class m-or-f))
-                          (maybe-static-method (list '. class m-or-f))]
+                         [(maybe-static-field (list 'clojure.core/. class m-or-f))
+                          (maybe-static-method (list 'clojure.core/. class m-or-f))]
                          (when target-class
                            [(maybe-instance-field target-expr target-class m-or-f)
                             (maybe-instance-method target-expr target-class m-or-f)]))]
