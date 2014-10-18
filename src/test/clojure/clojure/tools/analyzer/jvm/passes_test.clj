@@ -3,6 +3,7 @@
   (:require [clojure.tools.analyzer.ast :refer :all]
             [clojure.tools.analyzer.jvm :as ana.jvm]
             [clojure.tools.analyzer.env :as env]
+            [clojure.tools.analyzer.passes :refer [schedule]]
             [clojure.test :refer [deftest is]]
             [clojure.set :as set]
             [clojure.tools.analyzer.passes.add-binding-atom :refer [add-binding-atom]]
@@ -12,7 +13,6 @@
              :refer [emit-form emit-hygienic-form]]
             [clojure.tools.analyzer.passes.jvm.validate :as v]
             [clojure.tools.analyzer.passes.jvm.annotate-tag :refer [annotate-tag]]
-            [clojure.tools.analyzer.passes.jvm.clear-locals :refer [clear-locals]]
             [clojure.tools.analyzer.passes.jvm.infer-tag :refer [infer-tag]]
             [clojure.tools.analyzer.passes.jvm.annotate-branch :refer [annotate-branch]]
             [clojure.tools.analyzer.passes.jvm.annotate-methods :refer [annotate-methods]]
@@ -27,22 +27,6 @@
 (defn validate [ast]
   (env/with-env (ana.jvm/global-env)
     (v/validate ast)))
-
-(deftest collect-test
-  (let [c-test (-> (ast1 (let [a 1 b 2] (fn [x] (fn [] [+ (:foo {}) x a]))))
-                 :body :ret)]
-    (is (= '#{a__#0} (-> c-test :closed-overs keys set)))
-    (is (set/subset? #{{:form :foo
-                        :tag  Keyword
-                        :meta nil}
-                       {:form #'+
-                        :meta (meta #'+)
-                        :tag  clojure.lang.Var}
-                       {:form {}
-                        :tag  PersistentArrayMap
-                        :meta nil}}
-                     (-> c-test :methods first :body :ret :constants keys set))) ;; it registers metadata too (line+col info)
-    (is (= '#{a__#0 x__#0} (-> c-test :methods first :body :ret :closed-overs keys set)))))
 
 (deftest emit-form-test
   (is (= '(monitor-enter 1) (emit-form (ast (monitor-enter 1)))))
@@ -77,69 +61,6 @@
     (is (= true (-> c-ast :default :path?)))
     (is (every? :path? (-> c-ast :thens)))))
 
-(deftest clear-locals-test
-  (let [f-expr (-> (ast (fn [x] (if x x x) x (if x (do x x) (if x x x))))
-                 (prewalk (comp annotate-branch add-binding-atom))
-                 clear-locals :methods first :body)]
-    (is (= true (-> f-expr :statements first :then :to-clear? nil?)))
-    (is (= true (-> f-expr :statements first :else :to-clear? nil?)))
-    (is (= true (-> f-expr :statements second :to-clear? nil?)))
-    (is (= true (-> f-expr :ret :then :statements first :to-clear? nil?)))
-    (is (= true (-> f-expr :ret :then :ret :to-clear?)))
-    (is (= true (-> f-expr :ret :else :then :to-clear?)))
-    (is (= true (-> f-expr :ret :else :else :to-clear?))))
-  (let [f-expr (-> (ast (fn [x] (loop [a x] (if 1 x (do x (recur x))))))
-                 (prewalk (comp annotate-branch annotate-loops add-binding-atom))
-                 (collect-closed-overs {:what  #{:closed-overs}
-                                        :where #{:fn :loop}
-                                        :top-level? false})
-                 clear-locals :methods first :body :ret)]
-    (is (= true (-> f-expr :bindings first :init :to-clear? nil?)))
-    (is (= true (-> f-expr :body :ret :then :to-clear?)))
-    (is (= true (-> f-expr :body :ret :else :statements first :to-clear? nil?)))
-    (is (= true (-> f-expr :body :ret :else :ret :exprs first :to-clear? nil?))))
-  (let [f-expr (-> (ast (loop [] (let [a 1] (loop [] a)) (recur)))
-                 (prewalk (comp annotate-branch annotate-loops add-binding-atom))
-                 (collect-closed-overs {:what  #{:closed-overs}
-                                        :where #{:loop}
-                                        :top-level? false})
-                 clear-locals
-                 :body :statements first :body :ret :body :ret)]
-    (is (= true (-> f-expr :to-clear?))))
-  (let [f-expr (-> (ast (loop [] (let [a 1] (loop [] (if 1 a (recur)))) (recur)))
-                 (prewalk (comp annotate-branch annotate-loops add-binding-atom))
-                 (collect-closed-overs {:what  #{:closed-overs}
-                                        :where #{:loop}
-                                        :top-level? false})
-                 clear-locals
-                 :body :statements first :body :ret :body :ret :then)]
-    (is (= true (-> f-expr :to-clear?))))
-  (let [f-expr (-> (ast (let [a 1] (loop [] (let [b 2] (loop [] (if 1 [a b] (recur)))) (recur))))
-                 (prewalk (comp annotate-branch annotate-loops add-binding-atom))
-                 (collect-closed-overs {:what  #{:closed-overs}
-                                        :where #{:loop}
-                                        :top-level? false})
-                 clear-locals
-                 :body :ret :body :statements first :body :ret :body :ret :then :items)]
-    (is (= true (-> f-expr first :to-clear? nil?)))
-    (is (= true (-> f-expr second :to-clear?))))
-  (let [f-expr (-> (ast (let [a 1] (loop [] (if 1 a) (recur))))
-                 (prewalk (comp annotate-branch annotate-loops add-binding-atom))
-                 (collect-closed-overs {:what  #{:closed-overs}
-                                        :where #{:loop}
-                                        :top-level? false})
-                 clear-locals
-                 :body :ret :body :statements first :then)]
-    (is (= true (-> f-expr :to-clear? nil?))))
-  (let [f-expr (-> (ast (let [a 1] (loop [] (let [x (if 1 a)]) (recur))))
-                 (prewalk (comp annotate-branch annotate-loops add-binding-atom))
-                 (collect-closed-overs {:what  #{:closed-overs}
-                                        :where #{:loop}
-                                        :top-level? false})
-                 clear-locals
-                 :body :ret :body :statements first :bindings first :init :then)]
-    (is (= true (-> f-expr :to-clear? nil?)))))
-
 (deftest fix-case-test-test
   (let [c-ast (-> (ast (case 1 1 1)) add-binding-atom (prewalk fix-case-test))]
     (is (= true (-> c-ast :body :ret :test :atom deref :case-test)))))
@@ -164,6 +85,7 @@
 
 (deftest classify-invoke-test
   (is (= :keyword-invoke (-> (ast (:foo {})) classify-invoke :op)))
+  (is (= :invoke (-> (ast (:foo {} 1)) classify-invoke :op)))
   (is (= :protocol-invoke (-> (ast (f nil)) classify-invoke :op)))
   (is (= :instance? (-> (ast (instance? String ""))
                       (prewalk analyze-host-expr) classify-invoke :op)))
@@ -226,7 +148,8 @@
 (deftest var-tag-inference
   (let [ast (ana.jvm/analyze '(def a "foo")
                              (ana.jvm/empty-env)
-                             {:passes-opts {:infer-tag/level :global}})]
+                             {:passes-opts (merge ana.jvm/default-passes-opts
+                                                  {:infer-tag/level :global})})]
     (is (= String (-> ast :var meta :tag)))))
 
 (deftest validate-handlers
@@ -235,5 +158,6 @@
   ;; of the clojure compiler
   (is (ana.jvm/analyze '(defn ^long a [] 1)
                        (ana.jvm/empty-env)
-                       {:passes-opts {:validate/wrong-tag-handler (fn [t ast]
-                                                                    {t nil})}})))
+                       {:passes-opts (merge ana.jvm/default-passes-opts
+                                            {:validate/wrong-tag-handler (fn [t ast]
+                                                                           {t nil})})})))

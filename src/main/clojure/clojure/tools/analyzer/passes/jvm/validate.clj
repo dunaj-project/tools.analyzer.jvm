@@ -10,7 +10,10 @@
   (:require [clojure.tools.analyzer.ast :refer [prewalk]]
             [clojure.tools.analyzer.env :as env]
             [clojure.tools.analyzer.passes.cleanup :refer [cleanup]]
-            [clojure.tools.analyzer.utils :refer [arglist-for-arity source-info resolve-var resolve-ns]]
+            [clojure.tools.analyzer.passes.jvm
+             [infer-tag :refer [infer-tag]]
+             [analyze-host-expr :refer [analyze-host-expr]]]
+            [clojure.tools.analyzer.utils :refer [arglist-for-arity source-info resolve-var resolve-ns merge']]
             [clojure.tools.analyzer.jvm.utils :as u :refer [tag-match? try-best-match]])
   (:import (clojure.lang IFn ExceptionInfo)))
 
@@ -91,15 +94,15 @@
                    arg-tags (mapv u/maybe-class (:parameter-types m))
                    args (mapv (fn [arg tag] (assoc arg :tag tag)) args arg-tags)
                    class (u/maybe-class (:declaring-class m))]
-               (merge ast
-                      {:method     (:name m)
-                       :validated? true
-                       :class      class
-                       :o-tag      ret-tag
-                       :tag        (or tag ret-tag)
-                       :args       args}
-                      (if instance?
-                        {:instance (assoc instance :tag class)})))
+               (merge' ast
+                       {:method     (:name m)
+                        :validated? true
+                        :class      class
+                        :o-tag      ret-tag
+                        :tag        (or tag ret-tag)
+                        :args       args}
+                       (if instance?
+                         {:instance (assoc instance :tag class)})))
              (if all-ret-equals?
                (let [ret-tag (:return-type m)]
                  (assoc ast
@@ -163,16 +166,18 @@
 
 (defmethod -validate :def
   [ast]
-  (when-let [tag (-> ast :name meta :tag)]
-    (let [c (u/maybe-class tag)
-          s (if (symbol? tag) (name tag) tag)]
-      (when-not (and c (not (or (u/specials s) (u/special-arrays s))))
-        (if-let [handle (-> (env/deref-env) :passes-opts :validate/wrong-tag-handler)]
-          (handle nil ast)
-          (throw (ex-info (str "Wrong tag: " (eval tag) " in def: " (:name ast))
-                          (merge {:ast      (prewalk ast cleanup)}
-                                 (source-info (:env ast)))))))))
-  ast)
+  (merge
+   ast
+   (when-let [tag (-> ast :name meta :tag)]
+     (when (and (symbol? tag) (or (u/specials (str tag)) (u/special-arrays (str tag))))
+       ;; we cannot validate all tags since :tag might contain a function call that returns
+       ;; a valid tag at runtime, however if tag is one of u/specials or u/special-arrays
+       ;; we know that it's a wrong tag as it's going to be evaluated as a clojure.core function
+       (if-let [handle (-> (env/deref-env) :passes-opts :validate/wrong-tag-handler)]
+         (handle :name/tag ast)
+         (throw (ex-info (str "Wrong tag: " (eval tag) " in def: " (:name ast))
+                         (merge {:ast      (prewalk ast cleanup)}
+                                (source-info (:env ast))))))))))
 
 (defmethod -validate :invoke
   [{:keys [args env fn form] :as ast}]
@@ -232,8 +237,10 @@
    * :validate/wrong-tag-handler
       If bound to a function, will invoke that function instead of
       throwing on invalid tag.
-      The function takes the tag key and the AST and must return
-      a map of tag key -> valid tag value (or nil)
+      The function takes the tag key (or :name/tag if the node is :def and
+      the wrong tag is the one on the :name field meta) and must return a
+      map (or nil) that will be merged into the AST, possibly shadowing the
+      wrong tag with Object or nil.
    * :validate/unresolvable-symbol-handler
       If bound to a function, will invoke that function instead of
       throwing on unresolvable symbol.
@@ -242,13 +249,8 @@
       AST node which can be either a :maybe-class or a :maybe-host-form,
       those nodes are documented in the tools.analyzer quickref.
       The function must return a valid tools.analyzer.jvm AST node."
+  {:pass-info {:walk :post :depends #{#'infer-tag #'analyze-host-expr}}}
   [{:keys [tag form env] :as ast}]
-  (when-let [t (:tag (meta form))]
-    (when-not (u/maybe-class t)
-      (throw (ex-info (str "Class not found: " t)
-                      (merge {:class    t
-                              :ast      (prewalk ast cleanup)}
-                             (source-info env))))))
   (let [ast (merge (-validate ast)
                    (when tag
                      {:tag tag}))]

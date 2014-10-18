@@ -32,7 +32,7 @@
   `(ana.jvm/macroexpand-1 '~form e))
 
 (deftest macroexpander-test
-  (is (= (list '. (list 'clojure.core/identity java.lang.Object) 'toString)
+  (is (= (list '. (list 'do java.lang.Object) 'toString)
          (mexpand (.toString Object))))
   (is (= (list '. java.lang.Integer '(parseInt "2")) (mexpand (Integer/parseInt "2")))))
 
@@ -90,3 +90,16 @@
     (is (= :loop (:op tree)))
     (is (.startsWith (name (:name chunk)) "chunk"))
     (is (= clojure.lang.IChunk (:tag chunk)))))
+
+(def ^:dynamic x)
+(deftest set!-dynamic-var
+  (is (ast1 (set! x 1))))
+
+(deftest analyze-proxy
+  (is (ast1 (proxy [Object] []))))
+
+(deftest analyze-record
+  (is (ast1 (defrecord TestRecord [x y]))))
+
+(deftest eq-no-reflection
+  (is (:validated? (-> (ast1 (fn [s] (= s \f))) :methods first :body :ret))))

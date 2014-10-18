@@ -9,7 +9,8 @@
 (ns clojure.tools.analyzer.passes.jvm.classify-invoke
   (:require [clojure.tools.analyzer.utils :refer [arglist-for-arity protocol-node? source-info]]
             [clojure.tools.analyzer.jvm.utils
-             :refer [maybe-class prim-or-obj primitive? prim-interface]]))
+             :refer [specials prim-interface]]
+            [clojure.tools.analyzer.passes.jvm.validate :refer [validate]]))
 
 (defn classify-invoke
   "If the AST node is an :invoke, check the node in function position,
@@ -22,6 +23,7 @@
    * if it is a regular function with primitive type hints that match a
      clojure.lang.IFn$[primitive interface], transform the node in a :prim-invoke
      node"
+  {:pass-info {:walk :post :depends #{#'validate}}}
   [{:keys [op args tag env form] :as ast}]
   (if-not (= op :invoke)
     ast
@@ -29,18 +31,15 @@
           the-fn (:fn ast)
           op (:op the-fn)
           var? (= :var op)
-          the-var (:var the-fn)
-          arglist (arglist-for-arity the-fn argc)
-          arg-tags (mapv (comp prim-or-obj maybe-class :tag meta) arglist)
-          ret-tag (prim-or-obj (maybe-class (:tag (meta arglist))))
-          prim-interface (prim-interface (conj arg-tags ret-tag))]
+          the-var (:var the-fn)]
 
       (cond
 
        (and (= :const op)
             (= :keyword (:type the-fn)))
        (if (<= 1 argc 2)
-         (if (not (namespace (:val the-fn)))
+         (if (and (not (namespace (:val the-fn)))
+                  (= 1 argc))
            (merge (dissoc ast :fn :args)
                   {:op       :keyword-invoke
                    :target   (first args)
@@ -65,7 +64,7 @@
                :tag      (or tag Boolean/TYPE)
                :children [:target]})
 
-       (and var? (protocol-node? the-var))
+       (and var? (protocol-node? the-var (:meta the-fn)))
        (if (>= argc 1)
          (merge (dissoc ast :fn)
                 {:op          :protocol-invoke
@@ -77,13 +76,16 @@
                          (merge {:form form}
                                 (source-info env)))))
 
-       prim-interface
-       (merge ast
-              {:op             :prim-invoke
-               :prim-interface prim-interface
-               :args           (mapv (fn [arg tag] (assoc arg :tag tag)) args arg-tags)
-               :o-tag          ret-tag
-               :tag            (or tag ret-tag)})
-
        :else
-       ast))))
+       (let [arglist (arglist-for-arity the-fn argc)
+             arg-tags (mapv (comp specials str :tag meta) arglist)
+             ret-tag (-> arglist meta :tag str specials)
+             tags (conj arg-tags ret-tag)]
+         (if-let [prim-interface (prim-interface (mapv #(if (nil? %) Object %) tags))]
+           (merge ast
+                  {:op             :prim-invoke
+                   :prim-interface prim-interface
+                   :args           (mapv (fn [arg tag] (assoc arg :tag tag)) args arg-tags)
+                   :o-tag          ret-tag
+                   :tag            (or tag ret-tag)})
+           ast))))))

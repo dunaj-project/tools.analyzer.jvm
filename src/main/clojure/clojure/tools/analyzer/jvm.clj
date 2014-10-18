@@ -15,9 +15,10 @@
              :rename {analyze -analyze}]
 
             [clojure.tools.analyzer
-             [utils :refer [ctx resolve-var -source-info resolve-ns obj? dissoc-env butlast+last]]
+             [utils :refer [ctx resolve-var -source-info resolve-ns obj? dissoc-env butlast+last mmerge]]
              [ast :refer [walk prewalk postwalk]]
-             [env :as env :refer [*env*]]]
+             [env :as env :refer [*env*]]
+             [passes :refer [schedule]]]
 
             [clojure.tools.analyzer.jvm.utils :refer :all :as u :exclude [box specials]]
 
@@ -26,27 +27,16 @@
              [cleanup :refer [cleanup]]
              [elide-meta :refer [elide-meta elides]]
              [warn-earmuff :refer [warn-earmuff]]
-             [collect-closed-overs :refer [collect-closed-overs]]
-             [add-binding-atom :refer [add-binding-atom]]
              [uniquify :refer [uniquify-locals]]]
 
             [clojure.tools.analyzer.passes.jvm
+             [analyze-host-expr :refer [analyze-host-expr]]
              [box :refer [box]]
-             [collect :refer [collect]]
              [constant-lifter :refer [constant-lift]]
-             [annotate-branch :refer [annotate-branch]]
-             [annotate-loops :refer [annotate-loops]]
-             [annotate-methods :refer [annotate-methods]]
-             [annotate-class-id :refer [annotate-class-id]]
-             [annotate-internal-name :refer [annotate-internal-name]]
-             [fix-case-test :refer [fix-case-test]]
-             [clear-locals :refer [clear-locals]]
              [classify-invoke :refer [classify-invoke]]
              [validate :refer [validate]]
-             [infer-tag :refer [infer-tag ensure-tag]]
-             [annotate-tag :refer [annotate-tag]]
+             [infer-tag :refer [infer-tag]]
              [validate-loop-locals :refer [validate-loop-locals]]
-             [analyze-host-expr :refer [analyze-host-expr]]
              [warn-on-reflection :refer [warn-on-reflection]]
              [emit-form :refer [emit-form]]]
 
@@ -91,36 +81,24 @@
    :locals     {}
    :ns         (ns-name *ns*)})
 
+(defn desugar-symbol [form env]
+  (let [sym-ns (namespace form)]
+    (if-let [target (and sym-ns
+                         (not (resolve-ns (symbol sym-ns) env))
+                         (maybe-class sym-ns))]                           ;; Class/field
+      (with-meta (list '. target (symbol (str "-" (name form)))) ;; transform to (. Class -field)
+        (meta form))
+      form)))
+
 (defn desugar-host-expr [form env]
-  (cond
-   (symbol? form)
-   (let [target (maybe-class (namespace form))]
-     (if (and target (not (resolve-ns (symbol (namespace form)) env)))       ;; Class/field
-       (with-meta (list 'clojure.core/. target (symbol (str "-" (symbol (name form))))) ;; transform to (. Class -field)
-         (meta form))
-       form))
+  (let [[op & expr] form]
+    (if (symbol? op)
+      (let [opname (name op)
+            opns   (namespace op)]
+        (if-let [target (and opns
+                             (not (resolve-ns (symbol opns) env))
+                             (maybe-class opns))] ; (class/field ..)
 
-   (seq? form)
-   (let [[op & expr] form]
-     (if (symbol? op)
-       (let [opname (name op)
-             opns   (namespace op)]
-         (cond
-
-          (.startsWith opname ".") ; (.foo bar ..)
-          (let [[target & args] expr
-                target (if-let [target (and (not (get (:locals env) target))
-                                            (maybe-class target))]
-                         (with-meta (list 'clojure.core/identity target)
-                           {:tag 'java.lang.Class})
-                         target)
-                args (list* (symbol (subs opname 1)) args)]
-            (with-meta (list 'clojure.core/. target (if (= 1 (count args)) ;; we don't know if (.foo bar) is
-                                         (first args) args))  ;; a method call or a field access
-              (meta form)))
-
-          (and (maybe-class opns)
-               (not (resolve-ns (symbol opns) env))) ; (class/field ..)
           (let [target (maybe-class opns)
                 op (symbol opname)]
             (with-meta (list 'clojure.core/. target (if (zero? (count expr))
@@ -128,14 +106,25 @@
                                          (list* op expr)))
               (meta form)))
 
-          (.endsWith opname ".") ;; (class. ..)
-          (with-meta (list* 'clojure.core/new (symbol (subs opname 0 (dec (count opname)))) expr)
-            (meta form))
+          (cond
+           (.startsWith opname ".")     ; (.foo bar ..)
+           (let [[target & args] expr
+                 target (if-let [target (and (not (get (:locals env) target))
+                                             (maybe-class target))]
+                          (with-meta (list 'do target)
+                            {:tag 'java.lang.Class})
+                          target)
+                 args (list* (symbol (subs opname 1)) args)]
+             (with-meta (list 'clojure.core/. target (if (= 1 (count args)) ;; we don't know if (.foo bar) is
+                                          (first args) args))  ;; a method call or a field access
+               (meta form)))
 
-          :else form))
-       form))
+           (.endsWith opname ".") ;; (class. ..)
+           (with-meta (list* 'clojure.core/new (symbol (subs opname 0 (dec (count opname)))) expr)
+             (meta form))
 
-   :else form))
+           :else form)))
+      form)))
 
 (defn resolve-special*
   [op env]
@@ -150,62 +139,68 @@
     (cons sop args)))
 
 (defn macroexpand-1
-  "If form represents a macro form or an inlineable function,
-   returns its expansion, else returns form."
+  "If form represents a macro form or an inlineable function,returns its expansion,
+   else returns form."
   ([form] (macroexpand-1 form (empty-env)))
   ([form env]
      (env/ensure (global-env)
-       (if (seq? form)
-         (let [[op & args] form]
-           (if-let [sform (resolve-special form env)]
-             sform
-             (let [v (resolve-var op env)
-                   m (meta v)
-                   local? (-> env :locals (get op))
-                   macro? (and (not local?) (:macro m)) ;; locals shadow macros
-                   inline-arities-f (:inline-arities m)
-                   inline? (and (not local?)
-                                (or (not inline-arities-f)
-                                    (inline-arities-f (count args)))
-                                (:inline m))
-                   t (:tag m)]
-               (cond
+       (cond
 
-                macro?
-                (let [res (apply v form (:locals env) (rest form))] ; (m &form &env & args)
-                  (update-ns-map!)
-                  (if (obj? res)
-                    (vary-meta res merge (meta form))
-                    res))
+        (seq? form)
+        (let [[op & args] form]
+          (if-let [sform (resolve-special form env)]
+            sform
+            (let [v (resolve-var op env)
+                  m (meta v)
+                  local? (-> env :locals (get op))
+                  macro? (and (not local?) (:macro m)) ;; locals shadow macros
+                  inline-arities-f (:inline-arities m)
+                  inline? (and (not local?)
+                               (or (not inline-arities-f)
+                                   (inline-arities-f (count args)))
+                               (:inline m))
+                  t (:tag m)]
+              (cond
 
-                inline?
-                (let [res (apply inline? args)]
-                  (update-ns-map!)
-                  (if (obj? res)
-                    (vary-meta res merge
-                               (and t {:tag t})
-                               (meta form))
-                    res))
+               macro?
+               (let [res (apply v form (:locals env) (rest form))] ; (m &form &env & args)
+                 (update-ns-map!)
+                 (if (obj? res)
+                   (vary-meta res merge (meta form))
+                   res))
 
-                :else
-                (desugar-host-expr form env)))))
-         (desugar-host-expr form env)))))
+               inline?
+               (let [res (apply inline? args)]
+                 (update-ns-map!)
+                 (if (obj? res)
+                   (vary-meta res merge
+                              (and t {:tag t})
+                              (meta form))
+                   res))
 
-(defn qualify-argvec [arglist]
-  (letfn [(fix-tag [x] (vary-meta x merge
-                                  (when-let [t (:tag (meta x))]
-                                    {:tag (if (or (string? t)
-                                                  (u/specials (str t))
-                                                  (u/special-arrays (str t)))
-                                            t
-                                            (if-let [c (maybe-class t)]
-                                              (let [new-t (-> c .getName symbol)]
-                                                (if (= new-t t)
-                                                  t
-                                                  (with-meta new-t {::qualified? true})))
-                                              t))})))]
-    (with-meta (mapv fix-tag arglist)
-      (meta (fix-tag arglist)))))
+               :else
+               (desugar-host-expr form env)))))
+
+        (symbol? form)
+        (desugar-symbol form env)
+
+        :else
+        form))))
+
+(defn qualify-arglists [arglists]
+  (vary-meta arglists merge
+             (when-let [t (:tag (meta arglists))]
+               {:tag (if (or (string? t)
+                             (u/specials (str t))
+                             (u/special-arrays (str t)))
+                       t
+                       (if-let [c (maybe-class t)]
+                         (let [new-t (-> c .getName symbol)]
+                           (if (= new-t t)
+                             t
+                             (with-meta new-t {::qualified? true})))
+                         t))})))
+>>>>>>> master
 
 (defn create-var
   "Creates a Var for sym and returns it.
@@ -216,8 +211,7 @@
                             (let [{:keys [inline inline-arities arglists]} (meta sym)]
                               (merge {}
                                      (when arglists
-                                       {:arglists (seq (for [arglist arglists]
-                                                         (qualify-argvec arglist)))})
+                                       {:arglists (qualify-arglists arglists)})
                                      (when inline
                                        {:inline (eval inline)})
                                      (when inline-arities
@@ -306,9 +300,10 @@
 ;; HACK
 (defn -deftype [name class-name args interfaces]
 
-  (doseq [arg [class-name (str class-name) name (str name)]
-          f   [maybe-class members*]]
-    (memo-clear! f [arg]))
+  (doseq [arg [class-name name]]
+    (memo-clear! maybe-class-from-string [(str arg)])
+    (memo-clear! members* [arg])
+    (memo-clear! members* [(str arg)]))
 
   (let [interfaces (mapv #(symbol (.getName ^Class %)) interfaces)]
     (eval (list 'clojure.core/let []
@@ -376,7 +371,7 @@
         e (ctx env :ctx/expr)
         test-expr (-analyze expr e)
         [tests thens] (reduce (fn [[te th] [min-hash [test then]]]
-                                (let [test-expr (ana/-analyze :const test e)
+                                (let [test-expr (ana/analyze-const test e)
                                       then-expr (-analyze then env)]
                                   [(conj te {:op       :case-test
                                              :form     test
@@ -419,97 +414,64 @@
   (let [etype (if (= etype :default) Throwable etype)] ;; catch-all
     (ana/-parse `(catch ~etype ~ename ~@body) env)))
 
+(def default-passes
+  "Set of passes that will be run by default on the AST by #'run-passes"
+  #{#'warn-on-reflection
+    #'warn-earmuff
+
+    #'uniquify-locals
+
+    #'source-info
+    #'elide-meta
+    #'constant-lift
+
+    #'box
+
+    #'analyze-host-expr
+    #'validate-loop-locals
+    #'validate
+    #'infer-tag
+
+    #'classify-invoke})
+
+(def scheduled-default-passes
+  (schedule default-passes))
+
 (defn ^:dynamic run-passes
-  "Applies the following passes in the correct order to the AST:
-   * uniquify
-   * add-binding-atom
-   * source-info
-   * elide-meta
-   * warn-earmuff
-   * collect-closed-overs
-   * jvm.collect
-   * jvm.box
-   * jvm.constant-lifter
-   * jvm.annotate-branch
-   * jvm.annotate-loops
-   * jvm.annotate-class-id
-   * jvm.annotate-internal-name
-   * jvm.annotate-methods
-   * jvm.fix-case-test
-   * jvm.clear-locals
-   * jvm.classify-invoke
-   * jvm.validate
-   * jvm.infer-tag
-   * jvm.annotate-tag
-   * jvm.validate-loop-locals
-   * jvm.analyze-host-expr"
+  "Function that will be invoked on the AST tree immediately after it has been constructed,
+   by default runs the passes declared in #'default-passes, should be rebound if a different
+   set of passes is required.
+
+   Use #'clojure.tools.analyzer.passes/schedule to get a function from a set of passes that
+   run-passes can be bound to."
   [ast]
-  (-> ast
+  (scheduled-default-passes ast))
 
-    uniquify-locals
-    add-binding-atom
-
-    (prewalk (fn [ast]
-               (-> ast
-                 warn-earmuff
-                 source-info
-                 elide-meta
-                 annotate-methods
-                 fix-case-test
-                 annotate-class-id
-                 annotate-internal-name)))
-
-    ((fn analyze [ast]
-       (postwalk ast
-                 (fn [ast]
-                   (-> ast
-                     analyze-host-expr
-                     constant-lift
-                     annotate-tag
-                     infer-tag
-                     validate
-                     classify-invoke
-                     (validate-loop-locals analyze))))))
-
-    (prewalk (fn [ast]
-               (-> ast
-                 box
-                 warn-on-reflection
-                 annotate-loops  ;; needed for clear-locals to safely clear locals in a loop
-                 annotate-branch ;; needed for clear-locals
-                 ensure-tag)))
-
-    ((collect {:what       #{:constants
-                             :callsites}
-               :where      #{:deftype :reify :fn}
-               :top-level? false}))
-
-    ;; needs to be run in a separate pass to avoid collecting
-    ;; constants/callsites in :loop
-    (collect-closed-overs {:what  #{:closed-overs}
-                           :where #{:deftype :reify :fn :loop :try}
-                           :top-level? false})
-
-    ;; needs to be run after collect-closed-overs
-    clear-locals))
+(def default-passes-opts
+  "Default :passes-opts for `analyze`"
+  {:collect/what                    #{:constants :callsites}
+   :collect/where                   #{:deftype :reify :fn}
+   :collect/top-level?              false
+   :collect-closed-overs/where      #{:deftype :reify :fn :loop :try}
+   :collect-closed-overs/top-level? false})
 
 (defn analyze
-  "Returns an AST for the form that's compatible with what tools.emitter.jvm requires.
+  "Analyzes a clojure form using tools.analyzer augmented with the JVM specific special ops
+   and returns its AST, after running #'run-passes on it.
 
-   Binds tools.analyzer/{macroexpand-1,create-var,parse} to
-   tools.analyzer.jvm/{macroexpand-1,create-var,parse} and analyzes the form.
+   If no configuration option is provides, analyze will setup tools.analyzer using the extension
+   points declared in this namespace.
 
    If provided, opts should be a map of options to analyze, currently the only valid
-   options are :bindings and :passes-opts.
+   options are :bindings and :passes-opts (if not provided, :passes-opts defaults to the
+   value of `default-passes-opts`).
    If provided, :bindings should be a map of Var->value pairs that will be merged into the
    default bindings for tools.analyzer, useful to provide custom extension points.
    If provided, :passes-opts should be a map of pass-name-kw->pass-config-map pairs that
    can be used to configure the behaviour of each pass.
 
    E.g.
-   (analyze form env {:bindings  {#'ana/macroexpand-1 my-mexpand-1}})
-
-   Calls `run-passes` on the AST."
+   (analyze form env {:bindings  {#'ana/macroexpand-1 my-mexpand-1}})"
   ([form] (analyze form (empty-env) {}))
   ([form env] (analyze form env {}))
   ([form env opts]
@@ -523,8 +485,8 @@
                                                                 elides)}
                            (:bindings opts))
        (env/ensure (global-env)
-         (env/with-env (swap! env/*env* merge
-                              {:passes-opts (:passes-opts opts)})
+         (env/with-env (swap! env/*env* mmerge
+                              {:passes-opts (or (:passes-opts opts) default-passes-opts)})
            (run-passes (-analyze form env)))))))
 
 (deftype ExceptionThrown [e])
@@ -572,9 +534,8 @@
                  result (try (eval frm) ;; eval the emitted form rather than directly the form to avoid double macroexpansion
                              (catch Exception e
                                (ExceptionThrown. e)))]
-             (merge a
-                    {:result    result
-                     :raw-forms raw-forms})))))))
+             (merge a {:result    result
+                       :raw-forms raw-forms})))))))
 
 (defn analyze'
   "Like `analyze` but runs cleanup on the AST"
@@ -594,24 +555,25 @@
   "Analyzes a whole namespace, returns a vector of the ASTs for all the
    top-level ASTs of that namespace.
    Evaluates all the forms."
-  [ns]
-  (env/ensure (global-env)
-    (let [res (ns-resource ns)]
-      (assert res (str "Can't find " ns " in classpath"))
-      (let [filename (source-path res)
-            path (res-path res)]
-        (when-not (get-in (env/deref-env) [::analyzed-clj path])
-          (binding [*ns* *ns*]
-            (with-open [rdr (io/reader res)]
-              (let [pbr (readers/indexing-push-back-reader
-                         (java.io.PushbackReader. rdr) 1 filename)
-                    eof (Object.)
-                    env (empty-env)]
-                (loop []
-                  (let [form (reader/read pbr nil eof)]
-                    (when-not (identical? form eof)
-                      (swap! *env* update-in [::analyzed-clj path]
-                             (fnil conj [])
-                             (analyze+eval form (assoc env :ns (ns-name *ns*))))
-                      (recur))))))))
-        (get-in @*env* [::analyzed-clj path])))))
+  ([ns] (analyze-ns ns (empty-env)))
+  ([ns env] (analyze-ns ns env {}))
+  ([ns env opts]
+     (env/ensure (global-env)
+                 (let [res (ns-resource ns)]
+                   (assert res (str "Can't find " ns " in classpath"))
+                   (let [filename (source-path res)
+                         path (res-path res)]
+                     (when-not (get-in (env/deref-env) [::analyzed-clj path])
+                       (binding [*ns* *ns*]
+                         (with-open [rdr (io/reader res)]
+                           (let [pbr (readers/indexing-push-back-reader
+                                      (java.io.PushbackReader. rdr) 1 filename)
+                                 eof (Object.)]
+                             (loop []
+                               (let [form (reader/read pbr nil eof)]
+                                 (when-not (identical? form eof)
+                                   (swap! *env* update-in [::analyzed-clj path]
+                                          (fnil conj [])
+                                          (analyze+eval form (assoc env :ns (ns-name *ns*)) opts))
+                                   (recur))))))))
+                     (get-in @*env* [::analyzed-clj path]))))))

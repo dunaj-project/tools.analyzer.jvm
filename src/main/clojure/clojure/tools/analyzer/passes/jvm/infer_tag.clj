@@ -10,7 +10,12 @@
   (:require [clojure.tools.analyzer.utils :refer [arglist-for-arity]]
             [clojure.tools.analyzer.jvm.utils :as u]
             [clojure.tools.analyzer.env :as env]
-            [clojure.set :refer [rename-keys]]))
+            [clojure.set :refer [rename-keys]]
+            [clojure.tools.analyzer.passes.jvm
+             [annotate-tag :refer [annotate-tag]]
+             [annotate-methods :refer [annotate-methods]]
+             [analyze-host-expr :refer [analyze-host-expr]]
+             [fix-case-test :refer [fix-case-test]]]))
 
 (defmulti -infer-tag :op)
 (defmethod -infer-tag :default [ast] ast)
@@ -32,7 +37,7 @@
 
 (defmethod -infer-tag :var
   [{:keys [var form] :as ast}]
-  (let [{:keys [tag arglists]} (meta var)
+  (let [{:keys [tag arglists]} (:meta ast)
         arglists (if (= 'clojure.core/quote (first arglists))
                    (second arglists)
                    arglists)
@@ -221,7 +226,7 @@
           tag (or (:tag (meta arglist))
                   (:return-tag fn)
                   (and (= :var (:op fn))
-                       (:tag (meta (:var fn)))))]
+                       (:tag (:meta fn))))]
       (merge ast
              (when tag
                {:tag     tag
@@ -263,6 +268,7 @@
   Passes opts:
   * :infer-tag/level  If :global, infer-tag will perform Var tag
                       inference"
+  {:pass-info {:walk :post :depends #{#'annotate-tag #'annotate-methods #'fix-case-test #'analyze-host-expr}}}
   [{:keys [tag form] :as ast}]
   (let [tag (or tag (:tag (meta form)))
         ast (-infer-tag ast)]
@@ -271,9 +277,3 @@
              {:tag tag})
            (when-let [o-tag (:o-tag ast)]
              {:o-tag o-tag}))))
-
-(defn ensure-tag
-  [{:keys [o-tag tag] :as ast}]
-  (assoc ast
-    :tag   (or tag Object)
-    :o-tag (or o-tag Object)))

@@ -2,6 +2,23 @@ Changelog
 ========================================
 Since tools.analyzer.jvm version are usually cut simultaneously with a tools.analyzer version, check also the tools.analyzer [CHANGELOG](https://github.com/clojure/tools.analyzer/blob/master/CHANGELOG.md) for changes on the corresponding version, since changes in that library will reflect on this one.
 - - -
+* Release 0.6.1 on 13 Oct 2014
+  * Significant performance enhancements
+  * Made Class literals shadow Vars
+  * Fixed a bug in :arglists automatic tag qualification
+  * :env :locals are no longer uniquified by default, can be changed via pass-opts
+  * Fixed tag validation
+  * Removed annotate-class-id, annotate-internal-name, ensure-tag, collect, collect-closed-overs and clear-locals, moved to tools.emiter.jvm
+  * Fixed a bug in the method resolution code, caused some unnecessary reflection
+  * Added opts and env args to analyze-ns, consistent with the other analyze functions
+  * Made emit-form with :qualified-symbols qualify def symbol
+* Release 0.6.0 on 18 Sep 2014
+  * Started using clojure.tools.analyzer.passes/schedule to schedule the default passes and configured all the passes
+  * Reduced the set of default passes, removed: annotate-class-id, annotate-internal-name, ensure-tag
+  * Changed the interface of the collect pass
+  * Added default-passes and default-passes-opts to the clojure.tools.analyzer.jvm namespace
+* Release 0.5.6 on 02 Sep 2014
+  * Fixed a bug in classify-invoke that caused default-exprs in keyword invoke expressions to be lost
 * Release 0.5.5 on 31 Aug 2014
   * Fixed analyze-ns analysis caching
   * Qualify :arglists class names

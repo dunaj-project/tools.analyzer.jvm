@@ -6,13 +6,13 @@ An analyzer for Clojure code, written on top of [tools.analyzer](https://github.
 * [AST Quickref](#ast-quickref)
 * [Releases and Dependency Information](#releases-and-dependency-information)
 * [Changelog](#changelog)
+* [API Index](#api-index)
 * [Developer Information](#developer-information)
 * [License](#license)
 
-
 ## Note for REPL usage
 
-The AST `tools.analyzer.jvm` produces contains *a lot* of reduntant information and while having this structure in memory will not require an excessive amount of memory thanks to structural sharing, attempting to print the AST of even a relatively small clojure expression can easily produce a several thousand lines output which might make your REPL irresponsive for several seconds or even crash it.
+The AST `tools.analyzer.jvm` produces contains *a lot* of redundant information and while having this structure in memory will not require an excessive amount of memory thanks to structural sharing, attempting to print the AST of even a relatively small clojure expression can easily produce a several thousand lines output which might make your REPL irresponsive for several seconds or even crash it.
 For this reason, when exploring `tools.analyzer.jvm` ASTs on the REPL, I encourage you to:
 * set `*print-length*` and `*print-level*` to a small value, like 10
 * use `analyze'` rather than `analyze` and `analyze+eval'` rather than `analyze+eval` as they remove the namespaces map from the AST envs, reducing by a great amount the output size
@@ -100,7 +100,8 @@ user> (ana.jvm/analyze-ns 'clojure.string)
 
 [AST Quickref](http://clojure.github.io/tools.analyzer.jvm/spec/quickref.html)
 ========================================
-
+Note that the quickref refers to the last stable release of t.a.jvm and might not be valid for the current SNAPSHOT version or for previous ones.
+Note also that the documented node fields refer to the output of t.a.jvm/analyze running the default passes and using the default configuration.
 
 ## SPONSORSHIP
 
@@ -119,7 +120,7 @@ YourKit is kindly supporting open source projects with its full-featured Java Pr
 Releases and Dependency Information
 ========================================
 
-Latest stable release: 0.5.5
+Latest stable release: 0.6.1
 
 * [All Released Versions](http://search.maven.org/#search%7Cgav%7C1%7Cg%3A%22org.clojure%22%20AND%20a%3A%22tools.analyzer.jvm%22)
 
@@ -128,7 +129,7 @@ Latest stable release: 0.5.5
 [Leiningen](https://github.com/technomancy/leiningen) dependency information:
 
 ```clojure
-[org.clojure/tools.analyzer.jvm "0.5.5"]
+[org.clojure/tools.analyzer.jvm "0.6.1"]
 ```
 [Maven](http://maven.apache.org/) dependency information:
 
@@ -136,19 +137,23 @@ Latest stable release: 0.5.5
 <dependency>
   <groupId>org.clojure</groupId>
   <artifactId>tools.analyzer.jvm</artifactId>
-  <version>0.5.5</version>
+  <version>0.6.1</version>
 </dependency>
 ```
 
 [Changelog](CHANGELOG.md)
 ========================================
 
+API Index
+========================================
+
+* [CrossClj Documentation](http://crossclj.info/doc/org.clojure/tools.analyzer.jvm/lastest/index.html)
+* [API index](http://clojure.github.io/tools.analyzer.jvm)
+
 Developer Information
 ========================================
 
 * [GitHub project](https://github.com/clojure/tools.analyzer.jvm)
-
-* [API index](http://clojure.github.io/tools.analyzer.jvm)
 
 * [Bug Tracker](http://dev.clojure.org/jira/browse/TANAL)
 
