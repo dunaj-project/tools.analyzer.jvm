@@ -200,7 +200,6 @@
                              t
                              (with-meta new-t {::qualified? true})))
                          t))})))
->>>>>>> master
 
 (defn create-var
   "Creates a Var for sym and returns it.
