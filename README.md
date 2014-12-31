@@ -15,7 +15,6 @@ An analyzer for Clojure code, written on top of [tools.analyzer](https://github.
 The AST `tools.analyzer.jvm` produces contains *a lot* of redundant information and while having this structure in memory will not require an excessive amount of memory thanks to structural sharing, attempting to print the AST of even a relatively small clojure expression can easily produce a several thousand lines output which might make your REPL irresponsive for several seconds or even crash it.
 For this reason, when exploring `tools.analyzer.jvm` ASTs on the REPL, I encourage you to:
 * set `*print-length*` and `*print-level*` to a small value, like 10
-* use `analyze'` rather than `analyze` and `analyze+eval'` rather than `analyze+eval` as they remove the namespaces map from the AST envs, reducing by a great amount the output size
 * interactively explore the AST structure, inspecting the `:children` and `:op` fields of a node and the `keys` function rather than printing it to see its content
 
 ## Example Usage
@@ -120,7 +119,7 @@ YourKit is kindly supporting open source projects with its full-featured Java Pr
 Releases and Dependency Information
 ========================================
 
-Latest stable release: 0.6.1
+Latest stable release: 0.6.5
 
 * [All Released Versions](http://search.maven.org/#search%7Cgav%7C1%7Cg%3A%22org.clojure%22%20AND%20a%3A%22tools.analyzer.jvm%22)
 
@@ -129,7 +128,7 @@ Latest stable release: 0.6.1
 [Leiningen](https://github.com/technomancy/leiningen) dependency information:
 
 ```clojure
-[org.clojure/tools.analyzer.jvm "0.6.1"]
+[org.clojure/tools.analyzer.jvm "0.6.5"]
 ```
 [Maven](http://maven.apache.org/) dependency information:
 
@@ -137,7 +136,7 @@ Latest stable release: 0.6.1
 <dependency>
   <groupId>org.clojure</groupId>
   <artifactId>tools.analyzer.jvm</artifactId>
-  <version>0.6.1</version>
+  <version>0.6.5</version>
 </dependency>
 ```
 

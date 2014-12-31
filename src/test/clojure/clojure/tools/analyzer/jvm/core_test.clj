@@ -81,7 +81,7 @@
     (is (= 0 (-> c-ast :shift)))
     (is (= 0 (-> c-ast :mask))))
 
-  (is (= Throwable (-> (ast (try (catch :default e))) :catches first :class :val))))
+  (is (= Throwable (-> (ast1 (try (catch :default e))) :catches first :class :val))))
 
 (deftest doseq-chunk-hint
   (let [tree (ast1 (doseq [item (range 10)]
@@ -102,4 +102,4 @@
   (is (ast1 (defrecord TestRecord [x y]))))
 
 (deftest eq-no-reflection
-  (is (:validated? (-> (ast1 (fn [s] (= s \f))) :methods first :body :ret))))
+  (is (:validated? (-> (ast1 (fn [s] (= s \f))) :methods first :body))))

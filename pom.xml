@@ -2,7 +2,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <artifactId>tools.analyzer.jvm</artifactId>
-  <version>0.6.2-SNAPSHOT</version>
+  <version>0.6.6-SNAPSHOT</version>
   <name>${artifactId}</name>
   <description>Additional jvm-specific passes for tools.analyzer</description>
 
@@ -11,6 +11,10 @@
     <artifactId>pom.contrib</artifactId>
     <version>0.1.2</version>
   </parent>
+
+  <properties>
+    <clojure.version>1.5.1</clojure.version>
+  </properties>
 
   <developers>
     <developer>
@@ -23,7 +27,7 @@
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>tools.analyzer</artifactId>
-      <version>0.6.2-SNAPSHOT</version>
+      <version>0.6.5-SNAPSHOT</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
@@ -38,7 +42,7 @@
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>tools.reader</artifactId>
-      <version>0.8.8</version>
+      <version>0.8.13</version>
     </dependency>
   </dependencies>
 
