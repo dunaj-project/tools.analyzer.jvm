@@ -81,7 +81,7 @@
     (if-let [target (and sym-ns
                          (not (resolve-ns (symbol sym-ns) env))
                          (maybe-class-literal sym-ns))]          ;; Class/field
-      (with-meta (list '. target (symbol (str "-" (name form)))) ;; transform to (. Class -field)
+      (with-meta (list 'clojure.core/. target (symbol (str "-" (name form)))) ;; transform to (. Class -field)
         (meta form))
       form)))
 
@@ -104,7 +104,7 @@
            (.startsWith opname ".")     ; (.foo bar ..)
            (let [[target & args] expr
                  target (if-let [target (maybe-class-literal target)]
-                          (with-meta (list 'do target)
+                          (with-meta (list 'clojure.core/do target)
                             {:tag 'java.lang.Class})
                           target)
                  args (list* (symbol (subs opname 1)) args)]

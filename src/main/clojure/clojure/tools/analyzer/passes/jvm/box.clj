@@ -19,9 +19,9 @@
   :op)
 
 (defmacro if-let-box [class then else]
-  `(let [c# ~class
-         ~class (u/box c#)]
-     (if (u/primitive? c#)
+  `(clojure.core/let [c# ~class
+                      ~class (u/box c#)]
+     (clojure.core/if (u/primitive? c#)
        ~then
        ~else)))
 

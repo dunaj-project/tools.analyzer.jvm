@@ -53,11 +53,11 @@
 
 (defmethod -emit-form :monitor-enter
   [{:keys [target]} opts]
-  `(monitor-enter ~(-emit-form* target opts)))
+  `(clojure.core/monitor-enter ~(-emit-form* target opts)))
 
 (defmethod -emit-form :monitor-exit
   [{:keys [target]} opts]
-  `(monitor-exit ~(-emit-form* target opts)))
+  `(clojure.core/monitor-exit ~(-emit-form* target opts)))
 
 (defmethod -emit-form :import
   [{:keys [class]} opts]
@@ -65,7 +65,7 @@
 
 (defmethod -emit-form :the-var
   [{:keys [^clojure.lang.Var var]} opts]
-  `(var ~(symbol (name (ns-name (.ns var))) (name (.sym var)))))
+  `(clojure.core/var ~(symbol (name (ns-name (.ns var))) (name (.sym var)))))
 
 (defmethod -emit-form :method
   [{:keys [params body this name form]} opts]
@@ -80,23 +80,24 @@
 
 (defmethod -emit-form :catch
   [{:keys [class local body]} opts]
+  ;; NOTE: kept unqualified
   `(catch ~(-emit-form* class opts) ~(-emit-form* local opts)
      ~(-emit-form* body opts)))
 
 (defmethod -emit-form :deftype
   [{:keys [name class-name fields interfaces methods]} opts]
-  `(deftype* ~name ~(class->sym class-name) ~(mapv #(-emit-form* % opts) fields)
+  `(clojure.core/deftype* ~name ~(class->sym class-name) ~(mapv #(-emit-form* % opts) fields)
      :implements ~(mapv class->sym interfaces)
      ~@(mapv #(-emit-form* % opts) methods)))
 
 (defmethod -emit-form :reify
   [{:keys [interfaces methods]} opts]
-  `(reify* ~(mapv class->sym (disj interfaces clojure.lang.IObj))
+  `(clojure.core/reify* ~(mapv class->sym (disj interfaces clojure.lang.IObj))
            ~@(mapv #(-emit-form* % opts) methods)))
 
 (defmethod -emit-form :case
   [{:keys [test default tests thens shift mask low high switch-type test-type skip-check?]} opts]
-  `(case* ~(-emit-form* test opts)
+  `(clojure.core/case* ~(-emit-form* test opts)
           ~shift ~mask
           ~(-emit-form* default opts)
           ~(apply sorted-map
@@ -159,7 +160,7 @@
   [ast opts]
   (let [f (default/-emit-form ast opts)]
     (if (:qualified-symbols opts)
-      `(def ~(with-meta (symbol (-> ast :env :ns name) (str (second f)))
+      `(clojure.core/def ~(with-meta (symbol (-> ast :env :ns name) (str (second f)))
                (meta (second f)))
          ~@(nthrest f 2))
       f)))
