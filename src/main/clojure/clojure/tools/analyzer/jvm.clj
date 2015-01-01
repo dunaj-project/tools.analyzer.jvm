@@ -129,7 +129,7 @@
 (defn resolve-special
   [[op & args :as form] env]
   (when-let [sop (resolve-special* op env)]
-    (with-meta (cons sop args) (meta form))
+    (with-meta (cons sop args) (meta form))))
 
 (defn macroexpand-1
   "If form represents a macro form or an inlineable function,returns its expansion,
