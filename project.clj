@@ -1,4 +1,4 @@
-(defproject org.dunaj/tools.analyzer.jvm "0.6.6-dunaj_pre1"
+(defproject org.dunaj/tools.analyzer.jvm "0.6.6-dunaj_pre2-SNAPSHOT"
   :description "Additional jvm-specific passes for tools.analyzer."
   :url "https://github.com/dunaj-project/tools.analyzer.jvm"
   :scm {:name "git" :url "https://github.com/dunaj-project/tools.analyzer.jvm"}
