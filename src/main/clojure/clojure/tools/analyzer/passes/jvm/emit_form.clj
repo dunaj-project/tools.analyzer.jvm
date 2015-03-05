@@ -21,6 +21,7 @@
       (with-meta expr (merge m (meta expr)))
       expr)))
 
+;; TODO: use pass opts infr
 (defn emit-form
   "Return the form represented by the given AST
    Opts is a set of options, valid options are:
@@ -75,8 +76,15 @@
          (meta (second form)))
       ~(-emit-form* body opts))))
 
+(defn class->str [class]
+  (if (symbol? class)
+    (name class)
+    (.getName ^Class class)))
+
 (defn class->sym [class]
-  (symbol (.getName ^Class class)))
+  (if (symbol? class)
+    class
+    (symbol (.getName ^Class class))))
 
 (defmethod -emit-form :catch
   [{:keys [class local body]} opts]
@@ -108,11 +116,11 @@
 
 (defmethod -emit-form :static-field
   [{:keys [class field]} opts]
-  (symbol (.getName ^Class class) (name field)))
+  (symbol (class->str class) (name field)))
 
 (defmethod -emit-form :static-call
   [{:keys [class method args]} opts]
-  `(~(symbol (.getName ^Class class) (name method))
+  `(~(symbol (class->str class) (name method))
     ~@(mapv #(-emit-form* % opts) args)))
 
 (defmethod -emit-form :instance-field
@@ -123,10 +131,6 @@
   [{:keys [instance method args]} opts]
   `(~(symbol (str "." (name method))) ~(-emit-form* instance opts)
     ~@(mapv #(-emit-form* % opts) args)))
-
-(defmethod -emit-form :host-interop
-  [{:keys [target m-or-f]} opts]
-  `(~(symbol (str "." (name m-or-f))) ~(-emit-form* target opts)))
 
 (defmethod -emit-form :prim-invoke
   [{:keys [fn args]} opts]
